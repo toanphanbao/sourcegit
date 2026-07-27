@@ -1,0 +1,1190 @@
+diff --git a/src/ViewModels/Histories.cs b/src/ViewModels/Histories.cs
+index 15cf1574..e67253b0 100644
+--- a/src/ViewModels/Histories.cs
++++ b/src/ViewModels/Histories.cs
+@@ -9,8 +9,44 @@ using Avalonia.Threading;
+ using CommunityToolkit.Mvvm.ComponentModel;
+ 
+ namespace SourceGit.ViewModels
+ {
++    public class HistoryAuthorFilterOption
++    {
++        public string Name { get; }
++        public string Email { get; }
++        public string DisplayName { get; }
++        public bool IsAll { get; }
++
++        public HistoryAuthorFilterOption()
++        {
++            DisplayName = App.Text("Repository.FilterCommits.Default");
++            IsAll = true;
++        }
++
++        public HistoryAuthorFilterOption(Models.User user)
++        {
++            Name = user?.Name ?? string.Empty;
++            Email = user?.Email ?? string.Empty;
++            DisplayName = string.IsNullOrEmpty(Email) ? Name : $"{Name} <{Email}>";
++        }
++
++        public bool IsMatch(Models.User user)
++        {
++            if (IsAll)
++                return true;
++
++            return user != null &&
++                user.Name.Equals(Name, StringComparison.Ordinal) &&
++                user.Email.Equals(Email, StringComparison.Ordinal);
++        }
++
++        public override string ToString()
++        {
++            return DisplayName;
++        }
++    }
++
+     public class Histories : ObservableObject
+     {
+         public bool IsLoading
+         {
+@@ -74,10 +110,20 @@ namespace SourceGit.ViewModels
+         {
+             get => _commits;
+             set
+             {
+-                GenerateGraph(value, true);
+-                if (SetProperty(ref _commits, value))
++                SetProperty(ref _commits, value ?? []);
++                RefreshAuthorFilters();
++                RefreshVisibleCommits(true);
++            }
++        }
++
++        public List<Models.Commit> VisibleCommits
++        {
++            get => _visibleCommits;
++            private set
++            {
++                if (SetProperty(ref _visibleCommits, value))
+                     PostCommitsChanged();
+             }
+         }
+ 
+@@ -94,13 +140,29 @@ namespace SourceGit.ViewModels
+             {
+                 if (_repo.UIStates.GraphHighlighting != value)
+                 {
+                     _repo.UIStates.GraphHighlighting = value;
+-                    GenerateGraph(_commits);
++                    GenerateGraph(_visibleCommits);
+                 }
+             }
+         }
+ 
++        public List<HistoryAuthorFilterOption> AuthorFilters
++        {
++            get => _authorFilters;
++            private set => SetProperty(ref _authorFilters, value);
++        }
++
++        public HistoryAuthorFilterOption SelectedAuthorFilter
++        {
++            get => _selectedAuthorFilter;
++            set
++            {
++                if (SetProperty(ref _selectedAuthorFilter, value ?? _authorFilters[0]))
++                    RefreshVisibleCommits();
++            }
++        }
++
+         public List<Models.Commit> SelectedCommits
+         {
+             get => _selectedCommits;
+             set
+@@ -246,9 +308,9 @@ namespace SourceGit.ViewModels
+         }
+ 
+         public void NavigateTo(string commitSHA)
+         {
+-            var commit = _commits.Find(x => x.SHA.StartsWith(commitSHA, StringComparison.Ordinal));
++            var commit = _visibleCommits.Find(x => x.SHA.StartsWith(commitSHA, StringComparison.Ordinal));
+             if (commit != null)
+             {
+                 SelectedCommits = [commit];
+                 return;
+@@ -444,9 +506,9 @@ namespace SourceGit.ViewModels
+         {
+             if (_selectedCommits.Count == 0)
+                 return;
+ 
+-            if (_commits.Count == 0 || _selectedCommits.Count > 20)
++            if (_visibleCommits.Count == 0 || _selectedCommits.Count > 20)
+             {
+                 SelectedCommits = [];
+                 return;
+             }
+@@ -455,9 +517,9 @@ namespace SourceGit.ViewModels
+             foreach (var c in _selectedCommits)
+                 set.Add(c.SHA);
+ 
+             var selected = new List<Models.Commit>();
+-            foreach (var c in _commits)
++            foreach (var c in _visibleCommits)
+             {
+                 if (set.Contains(c.SHA))
+                 {
+                     selected.Add(c);
+@@ -506,9 +568,9 @@ namespace SourceGit.ViewModels
+                 DetailContext = new Models.Count(_selectedCommits.Count);
+             }
+ 
+             if (_repo.UIStates.GraphHighlighting >= Models.CommitGraphHighlighting.SelectedCommitsOnly)
+-                GenerateGraph(_commits);
++                GenerateGraph(_visibleCommits);
+         }
+ 
+         private void GenerateGraph(List<Models.Commit> commits, bool commitsChanged = false)
+         {
+@@ -524,17 +586,77 @@ namespace SourceGit.ViewModels
+ 
+             Graph = Models.CommitGraph.Generate(commits, commitsChanged, firstParentOnly, highlighting, extraHeads);
+         }
+ 
++        private void RefreshAuthorFilters()
++        {
++            var filters = new List<HistoryAuthorFilterOption> { new() };
++            var set = new HashSet<string>();
++            foreach (var commit in _commits)
++            {
++                var author = commit.Author;
++                if (author == null)
++                    continue;
++
++                var key = $"{author.Name}\n{author.Email}";
++                if (set.Add(key))
++                    filters.Add(new HistoryAuthorFilterOption(author));
++            }
++
++            filters.Sort((l, r) =>
++            {
++                if (l.IsAll)
++                    return -1;
++                if (r.IsAll)
++                    return 1;
++                return string.Compare(l.DisplayName, r.DisplayName, StringComparison.CurrentCultureIgnoreCase);
++            });
++
++            var selected = _selectedAuthorFilter;
++            AuthorFilters = filters;
++            SelectedAuthorFilter = selected == null ? filters[0] : FindAuthorFilter(filters, selected);
++        }
++
++        private void RefreshVisibleCommits(bool commitsChanged = false)
++        {
++            var selectedAuthor = _selectedAuthorFilter;
++            var visible = new List<Models.Commit>();
++            foreach (var commit in _commits)
++            {
++                if (selectedAuthor == null || selectedAuthor.IsMatch(commit.Author))
++                    visible.Add(commit);
++            }
++
++            GenerateGraph(visible, commitsChanged);
++            VisibleCommits = visible;
++        }
++
++        private static HistoryAuthorFilterOption FindAuthorFilter(List<HistoryAuthorFilterOption> filters, HistoryAuthorFilterOption selected)
++        {
++            foreach (var filter in filters)
++            {
++                if (filter.IsAll && selected.IsAll)
++                    return filter;
++
++                if (filter.Name == selected.Name && filter.Email == selected.Email)
++                    return filter;
++            }
++
++            return filters[0];
++        }
++
+         private Repository _repo = null;
+         private CommitDetailSharedData _commitDetailSharedData = null;
+         private bool _isLoading = true;
+         private List<Models.Commit> _commits = [];
++        private List<Models.Commit> _visibleCommits = [];
+         private Models.CommitGraph _graph = null;
+         private List<Models.Commit> _selectedCommits = [];
+         private Models.Bisect _bisect = null;
+         private object _detailContext = new Models.Null();
+         private bool _ignoreSelectionChange = false;
++        private List<HistoryAuthorFilterOption> _authorFilters = [new()];
++        private HistoryAuthorFilterOption _selectedAuthorFilter = new();
+ 
+         private GridLength _leftArea = new(1, GridUnitType.Star);
+         private GridLength _rightArea = new(1, GridUnitType.Star);
+         private GridLength _topArea = new(1, GridUnitType.Star);
+diff --git a/src/Models/RepositoryUIStates.cs b/src/Models/RepositoryUIStates.cs
+index 93cb6fc0..ea03ff45 100644
+--- a/src/Models/RepositoryUIStates.cs
++++ b/src/Models/RepositoryUIStates.cs
+@@ -92,8 +92,14 @@ namespace SourceGit.Models
+             get;
+             set;
+         } = true;
+ 
++        public bool IncludeMinifiedJsInLocalChanges
++        {
++            get;
++            set;
++        } = false;
++
+         public bool EnableForceOnFetch
+         {
+             get;
+             set;
+diff --git a/src/Resources/Themes.axaml b/src/Resources/Themes.axaml
+index 41431638..c272dd23 100644
+--- a/src/Resources/Themes.axaml
++++ b/src/Resources/Themes.axaml
+@@ -23,12 +23,16 @@
+       <Color x:Key="Color.FlatButton.FloatingBorder">#FF898989</Color>
+       <Color x:Key="Color.FG1">#FF1F1F1F</Color>
+       <Color x:Key="Color.FG2">#FF6F6F6F</Color>
+       <Color x:Key="Color.Diff.EmptyBG">#10000000</Color>
+-      <Color x:Key="Color.Diff.AddedBG">#80BFE6C1</Color>
+-      <Color x:Key="Color.Diff.DeletedBG">#80FF9797</Color>
+-      <Color x:Key="Color.Diff.AddedHighlight">#A7E1A7</Color>
+-      <Color x:Key="Color.Diff.DeletedHighlight">#F19B9D</Color>
++      <Color x:Key="Color.Diff.AddedBG">#A06FD977</Color>
++      <Color x:Key="Color.Diff.DeletedBG">#B0F05A5A</Color>
++      <Color x:Key="Color.Diff.AddedHighlight">#FF4CC85C</Color>
++      <Color x:Key="Color.Diff.DeletedHighlight">#FFE04B4E</Color>
++      <Color x:Key="Color.Diff.DocumentAddedBG">#80BFE6C1</Color>
++      <Color x:Key="Color.Diff.DocumentDeletedBG">#80FF9797</Color>
++      <Color x:Key="Color.Diff.DocumentAddedHighlight">#A7E1A7</Color>
++      <Color x:Key="Color.Diff.DocumentDeletedHighlight">#F19B9D</Color>
+       <Color x:Key="Color.Diff.BlockBorderHighlight">DarkCyan</Color>
+       <Color x:Key="Color.Link">#0000EE</Color>
+       <Color x:Key="Color.InlineCode">#FFE4E4E4</Color>
+       <Color x:Key="Color.InlineCodeFG">Black</Color>
+@@ -57,12 +61,16 @@
+       <Color x:Key="Color.FlatButton.FloatingBorder">#FF4F4F4F</Color>
+       <Color x:Key="Color.FG1">#FFDFDFDF</Color>
+       <Color x:Key="Color.FG2">#FF9F9F9F</Color>
+       <Color x:Key="Color.Diff.EmptyBG">#3C000000</Color>
+-      <Color x:Key="Color.Diff.AddedBG">#C03A5C3F</Color>
+-      <Color x:Key="Color.Diff.DeletedBG">#C0633F3E</Color>
+-      <Color x:Key="Color.Diff.AddedHighlight">#A0308D3C</Color>
+-      <Color x:Key="Color.Diff.DeletedHighlight">#A09F4247</Color>
++      <Color x:Key="Color.Diff.AddedBG">#D0448B4B</Color>
++      <Color x:Key="Color.Diff.DeletedBG">#D08A3838</Color>
++      <Color x:Key="Color.Diff.AddedHighlight">#D03DBE4F</Color>
++      <Color x:Key="Color.Diff.DeletedHighlight">#D0D44852</Color>
++      <Color x:Key="Color.Diff.DocumentAddedBG">#C03A5C3F</Color>
++      <Color x:Key="Color.Diff.DocumentDeletedBG">#C0633F3E</Color>
++      <Color x:Key="Color.Diff.DocumentAddedHighlight">#A0308D3C</Color>
++      <Color x:Key="Color.Diff.DocumentDeletedHighlight">#A09F4247</Color>
+       <Color x:Key="Color.Diff.BlockBorderHighlight">DarkCyan</Color>
+       <Color x:Key="Color.Link">#4DAAFC</Color>
+       <Color x:Key="Color.InlineCode">#FF383838</Color>
+       <Color x:Key="Color.InlineCodeFG">#FFF0F0F0</Color>
+@@ -97,8 +105,12 @@
+   <SolidColorBrush x:Key="Brush.Diff.AddedBG" Color="{DynamicResource Color.Diff.AddedBG}"/>
+   <SolidColorBrush x:Key="Brush.Diff.DeletedBG" Color="{DynamicResource Color.Diff.DeletedBG}"/>
+   <SolidColorBrush x:Key="Brush.Diff.AddedHighlight" Color="{DynamicResource Color.Diff.AddedHighlight}"/>
+   <SolidColorBrush x:Key="Brush.Diff.DeletedHighlight" Color="{DynamicResource Color.Diff.DeletedHighlight}"/>
++  <SolidColorBrush x:Key="Brush.Diff.DocumentAddedBG" Color="{DynamicResource Color.Diff.DocumentAddedBG}"/>
++  <SolidColorBrush x:Key="Brush.Diff.DocumentDeletedBG" Color="{DynamicResource Color.Diff.DocumentDeletedBG}"/>
++  <SolidColorBrush x:Key="Brush.Diff.DocumentAddedHighlight" Color="{DynamicResource Color.Diff.DocumentAddedHighlight}"/>
++  <SolidColorBrush x:Key="Brush.Diff.DocumentDeletedHighlight" Color="{DynamicResource Color.Diff.DocumentDeletedHighlight}"/>
+   <SolidColorBrush x:Key="Brush.Diff.BlockBorderHighlight" Color="{DynamicResource Color.Diff.BlockBorderHighlight}"/>
+   <SolidColorBrush x:Key="Brush.Link" Color="{DynamicResource Color.Link}"/>
+   <SolidColorBrush x:Key="Brush.InlineCode" Color="{DynamicResource Color.InlineCode}"/>
+   <SolidColorBrush x:Key="Brush.InlineCodeFG" Color="{DynamicResource Color.InlineCodeFG}"/>
+diff --git a/src/ViewModels/Repository.cs b/src/ViewModels/Repository.cs
+index 8c08dbe7..07f13213 100644
+--- a/src/ViewModels/Repository.cs
++++ b/src/ViewModels/Repository.cs
+@@ -270,8 +270,22 @@ namespace SourceGit.ViewModels
+                 }
+             }
+         }
+ 
++        public bool IncludeMinifiedJs
++        {
++            get => _uiStates.IncludeMinifiedJsInLocalChanges;
++            set
++            {
++                if (value != _uiStates.IncludeMinifiedJsInLocalChanges)
++                {
++                    _uiStates.IncludeMinifiedJsInLocalChanges = value;
++                    OnPropertyChanged();
++                    _workingCopy?.RefreshVisibleChanges();
++                }
++            }
++        }
++
+         public bool IsSearchingCommits
+         {
+             get => _isSearchingCommits;
+             set
+@@ -472,9 +486,9 @@ namespace SourceGit.ViewModels
+             _histories = new Histories(this);
+             _workingCopy = new WorkingCopy(this) { CommitMessage = _uiStates.LastCommitMessage };
+             _stashesPage = new StashesPage(this);
+             _searchCommitContext = new SearchCommitContext(this);
+-            _selectedViewIndex = Preferences.Instance.ShowLocalChangesByDefault ? 1 : 0;
++            _selectedViewIndex = 1;
+             _lastFetchTime = DateTime.Now;
+             _autoFetchTimer = new Timer(AutoFetchByTimer, null, 5000, 5000);
+             RefreshAll();
+         }
+diff --git a/src/ViewModels/SearchCommitContext.cs b/src/ViewModels/SearchCommitContext.cs
+index e67046a9..03893e2b 100644
+--- a/src/ViewModels/SearchCommitContext.cs
++++ b/src/ViewModels/SearchCommitContext.cs
+@@ -286,9 +286,9 @@ namespace SourceGit.ViewModels
+         }
+ 
+         private Repository _repo = null;
+         private CancellationTokenSource _cancellation = null;
+-        private int _method = (int)Models.CommitSearchMethod.ByMessage;
++        private int _method = (int)Models.CommitSearchMethod.ByAuthor;
+         private string _filter = string.Empty;
+         private bool _onlySearchCurrentBranch = false;
+         private bool _isQuerying = false;
+         private List<Models.Commit> _results = null;
+diff --git a/src/ViewModels/WorkingCopy.cs b/src/ViewModels/WorkingCopy.cs
+index c4a4c648..7e8b0696 100644
+--- a/src/ViewModels/WorkingCopy.cs
++++ b/src/ViewModels/WorkingCopy.cs
+@@ -25,8 +25,21 @@ namespace SourceGit.ViewModels
+                 }
+             }
+         }
+ 
++        public bool IncludeMinifiedJs
++        {
++            get => _repo.IncludeMinifiedJs;
++            set
++            {
++                if (_repo.IncludeMinifiedJs != value)
++                {
++                    _repo.IncludeMinifiedJs = value;
++                    OnPropertyChanged();
++                }
++            }
++        }
++
+         public bool HasRemotes
+         {
+             get => _hasRemotes;
+             set => SetProperty(ref _hasRemotes, value);
+@@ -106,8 +119,9 @@ namespace SourceGit.ViewModels
+                         ResetAuthor = false;
+                     }
+ 
+                     Staged = GetStagedChanges(_cached);
++                    VisibleUnstaged = GetVisibleUnstagedChanges(_unstaged);
+                     VisibleStaged = GetVisibleChanges(_staged);
+                     SelectedStaged = [];
+                 }
+             }
+@@ -128,9 +142,9 @@ namespace SourceGit.ViewModels
+                 {
+                     if (_isLoadingData)
+                         return;
+ 
+-                    VisibleUnstaged = GetVisibleChanges(_unstaged);
++                    VisibleUnstaged = GetVisibleUnstagedChanges(_unstaged);
+                     VisibleStaged = GetVisibleChanges(_staged);
+                     SelectedUnstaged = [];
+                 }
+             }
+@@ -248,9 +262,8 @@ namespace SourceGit.ViewModels
+ 
+             var unstaged = new List<Models.Change>();
+             var visibleUnstaged = new List<Models.Change>();
+             var selectedUnstaged = new List<Models.Change>();
+-            var noFilter = string.IsNullOrEmpty(_filter);
+             var hasConflict = false;
+             var canSwitchDirectly = true;
+             foreach (var c in changes)
+             {
+@@ -258,9 +271,9 @@ namespace SourceGit.ViewModels
+                 {
+                     unstaged.Add(c);
+                     hasConflict |= c.IsConflicted;
+ 
+-                    if (noFilter || c.Path.Contains(_filter, StringComparison.OrdinalIgnoreCase))
++                    if (IsVisibleUnstagedChange(c))
+                     {
+                         visibleUnstaged.Add(c);
+                         if (lastSelectedUnstaged.Contains(c.Path))
+                             selectedUnstaged.Add(c);
+@@ -398,8 +411,18 @@ namespace SourceGit.ViewModels
+         {
+             Filter = string.Empty;
+         }
+ 
++        public void RefreshVisibleChanges()
++        {
++            if (_isLoadingData)
++                return;
++
++            VisibleUnstaged = GetVisibleUnstagedChanges(_unstaged);
++            VisibleStaged = GetVisibleChanges(_staged);
++            SelectedUnstaged = [];
++        }
++
+         public async Task UseTheirsAsync(List<Models.Change> changes)
+         {
+             using var lockWatcher = _repo.LockWatcher();
+ 
+@@ -678,8 +701,30 @@ namespace SourceGit.ViewModels
+ 
+             return visible;
+         }
+ 
++        private List<Models.Change> GetVisibleUnstagedChanges(List<Models.Change> changes)
++        {
++            var visible = new List<Models.Change>();
++            foreach (var c in changes)
++            {
++                if (IsVisibleUnstagedChange(c))
++                    visible.Add(c);
++            }
++
++            return visible;
++        }
++
++        private bool IsVisibleUnstagedChange(Models.Change change)
++        {
++            if (!IncludeMinifiedJs &&
++                change.WorkTree == Models.ChangeState.Modified &&
++                change.Path.EndsWith(".min.js", StringComparison.OrdinalIgnoreCase))
++                return false;
++
++            return string.IsNullOrEmpty(_filter) || change.Path.Contains(_filter, StringComparison.OrdinalIgnoreCase);
++        }
++
+         private async Task<List<Models.Change>> GetCanStageChangesAsync(List<Models.Change> changes)
+         {
+             if (!HasUnsolvedConflicts)
+                 return changes;
+diff --git a/src/Views/Histories.axaml b/src/Views/Histories.axaml
+index 9555d7e2..b059da19 100644
+--- a/src/Views/Histories.axaml
++++ b/src/Views/Histories.axaml
+@@ -22,15 +22,33 @@
+       <ColumnDefinition Width="3"/>
+       <ColumnDefinition Width="{Binding RightArea, Mode=TwoWay}" MinWidth="100"/>
+     </v:HistoriesLayout.ColumnDefinitions>
+ 
+-    <Grid Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="3">
++    <Grid Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="3" RowDefinitions="Auto,*">
++      <Border Grid.Row="0"
++              Padding="8,6,8,4"
++              Background="{DynamicResource Brush.Contents}"
++              BorderBrush="{DynamicResource Brush.Border0}"
++              BorderThickness="0,0,0,1">
++        <StackPanel Orientation="Horizontal" Spacing="8">
++          <TextBlock Text="{DynamicResource Text.Histories.Header.Author}"
++                     VerticalAlignment="Center"
++                     FontWeight="SemiBold"/>
++
++          <ComboBox MinWidth="260"
++                    Height="28"
++                    ItemsSource="{Binding AuthorFilters, Mode=OneWay}"
++                    SelectedItem="{Binding SelectedAuthorFilter, Mode=TwoWay}"/>
++        </StackPanel>
++      </Border>
++
+       <v:HistoriesCommitList x:Name="CommitListContainer"
++                             Grid.Row="1"
+                              Classes="static_scrollbar"
+                              ScrollViewer.AllowAutoHide="False"
+                              Background="Transparent"
+-                             ItemsSource="{Binding Commits, Mode=OneWay}"
+-                             TotalCommits="{Binding Commits.Count, Mode=OneWay}"
++                             ItemsSource="{Binding VisibleCommits, Mode=OneWay}"
++                             TotalCommits="{Binding VisibleCommits.Count, Mode=OneWay}"
+                              SelectedCommits="{Binding SelectedCommits, Mode=TwoWay}"
+                              ColumnHeaderHeight="24"
+                              RowHeight="26"
+                              LayoutUpdated="OnCommitListLayoutUpdated"
+@@ -233,26 +251,29 @@
+           </DataGridTemplateColumn>
+         </DataGrid.Columns>
+       </v:HistoriesCommitList>
+ 
+-      <Border Background="Transparent"
++      <Border Grid.Row="1"
++              Background="Transparent"
+               Height="24"
+               HorizontalAlignment="Stretch" VerticalAlignment="Top"
+               PointerMoved="OnCommitListHeaderPointerMoved"
+               PointerPressed="OnCommitListHeaderPointerPressed"
+               PointerReleased="OnCommitListHeaderPointerReleased"
+               ContextRequested="OnCommitListHeaderContextRequested"/>
+ 
+       <v:CommitGraph x:Name="CommitGraph"
++                     Grid.Row="1"
+                      Margin="0,24,0,0"
+                      Graph="{Binding Graph}"
+                      DotBrush="{DynamicResource Brush.Contents}"
+                      HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                      IsHitTestVisible="False"
+                      ClipToBounds="True"
+                      Loaded="OnCommitGraphLoaded"/>
+ 
+-      <Border Width="28" Height="28"
++      <Border Grid.Row="1"
++              Width="28" Height="28"
+               Margin="0,0,16,8"
+               CornerRadius="14"
+               Background="{DynamicResource Brush.Popup}"
+               HorizontalAlignment="Right" VerticalAlignment="Bottom"
+@@ -264,9 +285,13 @@
+               Fill="{DynamicResource Brush.FG1}"
+               Opacity=".8"/>
+       </Border>
+ 
+-      <v:LoadingIcon Width="48" Height="48" HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="{Binding IsLoading}"/>
++      <v:LoadingIcon Grid.Row="1"
++                     Width="48" Height="48"
++                     HorizontalAlignment="Center"
++                     VerticalAlignment="Center"
++                     IsVisible="{Binding IsLoading}"/>
+     </Grid>
+ 
+     <GridSplitter Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3"
+                   MinWidth="1" MinHeight="1"
+diff --git a/src/Views/Repository.axaml b/src/Views/Repository.axaml
+index 2b6b7f9d..44ba6d28 100644
+--- a/src/Views/Repository.axaml
++++ b/src/Views/Repository.axaml
+@@ -49,9 +49,9 @@
+         </RadioButton>
+       </StackPanel>
+ 
+       <!-- Dashboard -->
+-      <Grid Grid.Row="1" Margin="0,0,0,8" RowDefinitions="Auto,Auto,*" IsVisible="{Binding !IsSearchingCommits}">
++      <Grid Grid.Row="1" Margin="0,0,0,8" RowDefinitions="Auto,Auto,Auto,*" IsVisible="{Binding !IsSearchingCommits}">
+         <!-- Page Switcher for Right Panel -->
+         <Border Grid.Row="0" Margin="8,0,4,0" BorderThickness="1" BorderBrush="{DynamicResource Brush.Border2}" CornerRadius="6">
+           <ListBox Background="Transparent" Padding="4" SelectedIndex="{Binding SelectedViewIndex, Mode=TwoWay}" SelectionMode="AlwaysSelected">
+             <ListBox.Styles>
+@@ -65,9 +65,9 @@
+                 <Setter Property="Foreground" Value="{DynamicResource Brush.FG2}"/>
+                 <Setter Property="FontWeight" Value="Bold"/>
+               </Style>
+               <Style Selector="ListBoxItem">
+-                <Setter Property="Height" Value="28"/>
++                <Setter Property="Height" Value="34"/>
+                 <Setter Property="Margin" Value="0"/>
+                 <Setter Property="Padding" Value="0"/>
+                 <Setter Property="BorderThickness" Value="0"/>
+                 <Setter Property="CornerRadius" Value="0"/>
+@@ -171,10 +171,46 @@
+             </ListBoxItem>
+           </ListBox>
+         </Border>
+ 
+-        <!-- Filter Branches/Tags/Submodules -->
++        <!-- Search Commits -->
+         <TextBox Grid.Row="1"
++                 x:Name="TxtDashboardSearchCommitsBox"
++                 Height="26"
++                 Margin="8,6,4,0"
++                 BorderThickness="1"
++                 BorderBrush="{DynamicResource Brush.Border2}"
++                 Background="{DynamicResource Brush.Contents}"
++                 CornerRadius="12"
++                 Watermark="{DynamicResource Text.Repository.Search}"
++                 Text="{Binding SearchCommitContext.Filter, Mode=TwoWay}"
++                 VerticalContentAlignment="Center"
++                 IsVisible="{Binding IsHistoriesVisible}"
++                 GotFocus="OnDashboardSearchCommitGotFocus">
++          <TextBox.InnerLeftContent>
++            <Path Width="14" Height="14"
++                  Margin="6,0,0,0"
++                  Fill="{DynamicResource Brush.FG2}"
++                  Data="{StaticResource Icons.Search}"/>
++          </TextBox.InnerLeftContent>
++
++          <TextBox.InnerRightContent>
++            <Button Classes="icon_button"
++                    Width="16"
++                    Margin="0,0,6,0"
++                    Click="OnClearSearchCommitFilter"
++                    IsVisible="{Binding SearchCommitContext.Filter, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
++                    HorizontalAlignment="Right">
++              <Path Width="14" Height="14"
++                    Margin="0,1,0,0"
++                    Fill="{DynamicResource Brush.FG1}"
++                    Data="{StaticResource Icons.Clear}"/>
++            </Button>
++          </TextBox.InnerRightContent>
++        </TextBox>
++
++        <!-- Filter Branches/Tags/Submodules -->
++        <TextBox Grid.Row="2"
+                  x:Name="FilterBox"
+                  Height="26"
+                  Margin="8,6,4,0"
+                  BorderThickness="1"
+@@ -204,9 +240,9 @@
+             </Button>
+           </TextBox.InnerRightContent>
+         </TextBox>
+ 
+-        <Grid Grid.Row="2" x:Name="LeftSidebarGroups" Margin="0,4,0,0" RowDefinitions="28,Auto,28,Auto,28,Auto,28,Auto,28,Auto" SizeChanged="OnLeftSidebarSizeChanged">
++        <Grid Grid.Row="3" x:Name="LeftSidebarGroups" Margin="0,8,0,0" RowDefinitions="34,Auto,34,Auto,34,Auto,34,Auto,34,Auto" SizeChanged="OnLeftSidebarSizeChanged">
+           <!-- Local Branches -->
+           <ToggleButton Grid.Row="0" Classes="group_expander" IsChecked="{Binding IsLocalBranchGroupExpanded, Mode=TwoWay}">
+             <Grid ColumnDefinitions="16,*,Auto,Auto">
+               <Path Grid.Column="0" Width="11" Height="11" HorizontalAlignment="Left" Data="{StaticResource Icons.Local}" Fill="{DynamicResource Brush.FG2}"/>
+diff --git a/src/Views/Repository.axaml.cs b/src/Views/Repository.axaml.cs
+index f5bac41d..c4daec8a 100644
+--- a/src/Views/Repository.axaml.cs
++++ b/src/Views/Repository.axaml.cs
+@@ -32,8 +32,16 @@ namespace SourceGit.Views
+             if (e.Property == IsVisibleProperty && sender is Grid { IsVisible: true })
+                 TxtSearchCommitsBox.Focus();
+         }
+ 
++        private void OnDashboardSearchCommitGotFocus(object _, GotFocusEventArgs e)
++        {
++            if (DataContext is ViewModels.Repository repo)
++                repo.IsSearchingCommits = true;
++
++            e.Handled = true;
++        }
++
+         private void OnSearchKeyDown(object _, KeyEventArgs e)
+         {
+             if (DataContext is not ViewModels.Repository repo)
+                 return;
+diff --git a/src/Views/RepositoryToolbar.axaml b/src/Views/RepositoryToolbar.axaml
+index 87450c02..514417f7 100644
+--- a/src/Views/RepositoryToolbar.axaml
++++ b/src/Views/RepositoryToolbar.axaml
+@@ -26,39 +26,45 @@
+       </Button>
+     </StackPanel>
+ 
+     <StackPanel Grid.Column="1" Orientation="Horizontal">
+-      <Button Classes="icon_button" Width="32" Tapped="Fetch">
++      <Button Classes="icon_button" MinWidth="68" Padding="8,0" Tapped="Fetch">
+         <ToolTip.Tip>
+-          <StackPanel Orientation="Vertical">
+-            <TextBlock Text="{DynamicResource Text.Fetch}"/>
+-            <TextBlock Classes="small italic" Margin="0,4,0,0" Text="{DynamicResource Text.CtrlClickTip}" Foreground="{DynamicResource Brush.FG2}"/>
+-          </StackPanel>
++          <TextBlock Text="{DynamicResource Text.Fetch}"/>
+         </ToolTip.Tip>
+ 
+-        <Path Width="14" Height="14" Data="{StaticResource Icons.Fetch}"/>
++        <StackPanel Orientation="Horizontal" Spacing="6">
++          <Path Width="14" Height="14" Data="{StaticResource Icons.Fetch}"/>
++          <TextBlock Text="{DynamicResource Text.Fetch}"/>
++        </StackPanel>
+       </Button>
+ 
+-      <Button Classes="icon_button" Width="32" Margin="16,0,0,0" Tapped="Pull" IsVisible="{Binding !IsBare}" IsEnabled="{Binding !IsBare}">
++      <Button Classes="icon_button" MinWidth="60" Padding="8,0" Margin="16,0,0,0" Tapped="Pull" IsVisible="{Binding !IsBare}" IsEnabled="{Binding !IsBare}">
+         <ToolTip.Tip>
+           <StackPanel Orientation="Vertical">
+             <TextBlock Text="{DynamicResource Text.Pull}"/>
+             <TextBlock Classes="small italic" Margin="0,4,0,0" Text="{DynamicResource Text.CtrlClickTip}" Foreground="{DynamicResource Brush.FG2}"/>
+           </StackPanel>
+         </ToolTip.Tip>
+ 
+-        <Path Width="14" Height="14" Data="{StaticResource Icons.Pull}"/>
++        <StackPanel Orientation="Horizontal" Spacing="6">
++          <Path Width="14" Height="14" Data="{StaticResource Icons.Pull}"/>
++          <TextBlock Text="{DynamicResource Text.Pull}"/>
++        </StackPanel>
+       </Button>
+ 
+-      <Button Classes="icon_button" Width="32" Margin="16,0,0,0" Tapped="Push">
++      <Button Classes="icon_button" MinWidth="60" Padding="8,0" Margin="16,0,0,0" Tapped="Push">
+         <ToolTip.Tip>
+           <StackPanel Orientation="Vertical">
+             <TextBlock Text="{DynamicResource Text.Push}"/>
+             <TextBlock Classes="small italic" Margin="0,4,0,0" Text="{DynamicResource Text.CtrlClickTip}" Foreground="{DynamicResource Brush.FG2}"/>
+           </StackPanel>
+         </ToolTip.Tip>
+ 
+-        <Path Width="14" Height="14" Data="{StaticResource Icons.Push}"/>
++        <StackPanel Orientation="Horizontal" Spacing="6">
++          <Path Width="14" Height="14" Data="{StaticResource Icons.Push}"/>
++          <TextBlock Text="{DynamicResource Text.Push}"/>
++        </StackPanel>
+       </Button>
+ 
+       <Button Classes="icon_button" Width="32" Margin="16,0,0,0" Tapped="StashAll" IsVisible="{Binding !IsBare}">
+         <ToolTip.Tip>
+diff --git a/src/Views/RepositoryToolbar.axaml.cs b/src/Views/RepositoryToolbar.axaml.cs
+index 0d03acb8..dd110dd7 100644
+--- a/src/Views/RepositoryToolbar.axaml.cs
++++ b/src/Views/RepositoryToolbar.axaml.cs
+@@ -174,9 +174,9 @@ namespace SourceGit.Views
+         private async void Fetch(object sender, TappedEventArgs e)
+         {
+             if (DataContext is ViewModels.Repository repo)
+             {
+-                await repo.FetchAsync(e.KeyModifiers is KeyModifiers.Control);
++                await repo.FetchAsync(true);
+                 e.Handled = true;
+             }
+         }
+ 
+diff --git a/src/Views/TextDiffView.axaml b/src/Views/TextDiffView.axaml
+index f139727f..27bac3b4 100644
+--- a/src/Views/TextDiffView.axaml
++++ b/src/Views/TextDiffView.axaml
+@@ -7,22 +7,39 @@
+              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+              x:Class="SourceGit.Views.TextDiffView"
+              x:DataType="vm:TextDiffContext"
+              Background="{DynamicResource Brush.Contents}">
++  <UserControl.Styles>
++    <Style Selector="ScrollBar:vertical">
++      <Setter Property="Width" Value="12"/>
++    </Style>
++
++    <Style Selector="ScrollBar:horizontal">
++      <Setter Property="Height" Value="12"/>
++    </Style>
++
++    <Style Selector="ScrollBar:vertical /template/ Thumb">
++      <Setter Property="Width" Value="12"/>
++    </Style>
++
++    <Style Selector="ScrollBar:horizontal /template/ Thumb">
++      <Setter Property="Height" Value="12"/>
++    </Style>
++  </UserControl.Styles>
+   <Grid>
+     <ContentControl Content="{Binding}">
+       <ContentControl.DataTemplates>
+         <DataTemplate DataType="vm:CombinedTextDiff">
+-          <Grid ColumnDefinitions="*,1,12">
++          <Grid ColumnDefinitions="*,1,36">
+             <v:CombinedTextDiffPresenter Grid.Column="0"
+                                          FileName="{Binding Option.Path}"
+                                          Foreground="{DynamicResource Brush.FG1}"
+                                          LineBrush="{DynamicResource Brush.Border2}"
+                                          EmptyContentBackground="{DynamicResource Brush.Diff.EmptyBG}"
+-                                         AddedContentBackground="{DynamicResource Brush.Diff.AddedBG}"
+-                                         DeletedContentBackground="{DynamicResource Brush.Diff.DeletedBG}"
+-                                         AddedHighlightBrush="{DynamicResource Brush.Diff.AddedHighlight}"
+-                                         DeletedHighlightBrush="{DynamicResource Brush.Diff.DeletedHighlight}"
++                                         AddedContentBackground="{DynamicResource Brush.Diff.DocumentAddedBG}"
++                                         DeletedContentBackground="{DynamicResource Brush.Diff.DocumentDeletedBG}"
++                                         AddedHighlightBrush="{DynamicResource Brush.Diff.DocumentAddedHighlight}"
++                                         DeletedHighlightBrush="{DynamicResource Brush.Diff.DocumentDeletedHighlight}"
+                                          IndicatorForeground="{DynamicResource Brush.FG2}"
+                                          BlockBorderHighlightBrush="{DynamicResource Brush.Diff.BlockBorderHighlight}"
+                                          FontFamily="{DynamicResource Fonts.Monospace}"
+                                          FontSize="{Binding Source={x:Static vm:Preferences.Instance}, Path=EditorFontSize}"
+@@ -48,21 +65,21 @@
+               <ColumnDefinition Width="*" MinWidth="100"/>
+               <ColumnDefinition Width="3"/>
+               <ColumnDefinition Width="*" MinWidth="100"/>
+               <ColumnDefinition Width="1" MinWidth="1" MaxWidth="1"/>
+-              <ColumnDefinition Width="12" MinWidth="12" MaxWidth="12"/>
++              <ColumnDefinition Width="36" MinWidth="36" MaxWidth="36"/>
+             </Grid.ColumnDefinitions>
+ 
+             <v:SingleSideTextDiffPresenter Grid.Column="0"
+                                            IsOld="True"
+                                            FileName="{Binding Option.Path}"
+                                            Foreground="{DynamicResource Brush.FG1}"
+                                            LineBrush="{DynamicResource Brush.Border2}"
+                                            EmptyContentBackground="{DynamicResource Brush.Diff.EmptyBG}"
+-                                           AddedContentBackground="{DynamicResource Brush.Diff.AddedBG}"
+-                                           DeletedContentBackground="{DynamicResource Brush.Diff.DeletedBG}"
+-                                           AddedHighlightBrush="{DynamicResource Brush.Diff.AddedHighlight}"
+-                                           DeletedHighlightBrush="{DynamicResource Brush.Diff.DeletedHighlight}"
++                                           AddedContentBackground="{DynamicResource Brush.Diff.DocumentAddedBG}"
++                                           DeletedContentBackground="{DynamicResource Brush.Diff.DocumentDeletedBG}"
++                                           AddedHighlightBrush="{DynamicResource Brush.Diff.DocumentAddedHighlight}"
++                                           DeletedHighlightBrush="{DynamicResource Brush.Diff.DocumentDeletedHighlight}"
+                                            IndicatorForeground="{DynamicResource Brush.FG2}"
+                                            BlockBorderHighlightBrush="{DynamicResource Brush.Diff.BlockBorderHighlight}"
+                                            FontFamily="{DynamicResource Fonts.Monospace}"
+                                            FontSize="{Binding Source={x:Static vm:Preferences.Instance}, Path=EditorFontSize}"
+@@ -87,12 +104,12 @@
+                                            FileName="{Binding Option.Path}"
+                                            Foreground="{DynamicResource Brush.FG1}"
+                                            LineBrush="{DynamicResource Brush.Border2}"
+                                            EmptyContentBackground="{DynamicResource Brush.Diff.EmptyBG}"
+-                                           AddedContentBackground="{DynamicResource Brush.Diff.AddedBG}"
+-                                           DeletedContentBackground="{DynamicResource Brush.Diff.DeletedBG}"
+-                                           AddedHighlightBrush="{DynamicResource Brush.Diff.AddedHighlight}"
+-                                           DeletedHighlightBrush="{DynamicResource Brush.Diff.DeletedHighlight}"
++                                           AddedContentBackground="{DynamicResource Brush.Diff.DocumentAddedBG}"
++                                           DeletedContentBackground="{DynamicResource Brush.Diff.DocumentDeletedBG}"
++                                           AddedHighlightBrush="{DynamicResource Brush.Diff.DocumentAddedHighlight}"
++                                           DeletedHighlightBrush="{DynamicResource Brush.Diff.DocumentDeletedHighlight}"
+                                            IndicatorForeground="{DynamicResource Brush.FG2}"
+                                            BlockBorderHighlightBrush="{DynamicResource Brush.Diff.BlockBorderHighlight}"
+                                            FontFamily="{DynamicResource Fonts.Monospace}"
+                                            FontSize="{Binding Source={x:Static vm:Preferences.Instance}, Path=EditorFontSize}"
+diff --git a/src/Views/TextDiffView.axaml.cs b/src/Views/TextDiffView.axaml.cs
+index f0b7837b..7b33f44e 100644
+--- a/src/Views/TextDiffView.axaml.cs
++++ b/src/Views/TextDiffView.axaml.cs
+@@ -1479,39 +1479,96 @@ namespace SourceGit.Views
+         protected override void OnPointerPressed(PointerPressedEventArgs e)
+         {
+             base.OnPointerPressed(e);
+ 
+-            var range = DisplayRange;
+-            if (range == null || range.End == 0)
++            if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed == false)
++                return;
++
++            if (!TryGetRangeMetrics(out var total, out var startY, out var endY))
++                return;
++
++            var pressedY = e.GetPosition(this).Y;
++            _dragPointer = e.Pointer;
++            _dragOffsetRatio = pressedY >= startY && pressedY <= endY
++                ? (pressedY - startY) / Math.Max(1, endY - startY)
++                : 0.5;
++
++            e.Pointer.Capture(this);
++            ScrollToPosition(pressedY, total);
++            e.Handled = true;
++        }
++
++        protected override void OnPointerMoved(PointerEventArgs e)
++        {
++            base.OnPointerMoved(e);
++
++            if (_dragPointer != e.Pointer)
+                 return;
+ 
+-            int total;
++            if (!TryGetTotalLineCount(out var total))
++                return;
++
++            ScrollToPosition(e.GetPosition(this).Y, total);
++            e.Handled = true;
++        }
++
++        protected override void OnPointerReleased(PointerReleasedEventArgs e)
++        {
++            base.OnPointerReleased(e);
++
++            if (_dragPointer != e.Pointer)
++                return;
++
++            e.Pointer.Capture(null);
++            _dragPointer = null;
++            e.Handled = true;
++        }
++
++        private bool TryGetTotalLineCount(out int total)
++        {
+             if (DataContext is ViewModels.TwoSideTextDiff twoSideDiff)
+             {
+                 total = Math.Max(twoSideDiff.Old.Count, twoSideDiff.New.Count);
++                return total > 0;
+             }
+-            else if (DataContext is ViewModels.CombinedTextDiff combined)
+-            {
+-                var data = combined.Data;
+-                total = data.Lines.Count;
+-            }
+-            else
++
++            if (DataContext is ViewModels.CombinedTextDiff combined)
+             {
+-                return;
++                total = combined.Data.Lines.Count;
++                return total > 0;
+             }
+ 
+-            var height = Bounds.Height;
+-            var startY = range.Start / (total * 1.0) * height;
+-            var endY = range.End / (total * 1.0) * height;
+-            var pressedY = e.GetPosition(this).Y;
+-            if (pressedY >= startY && pressedY <= endY)
+-                return;
++            total = 0;
++            return false;
++        }
++
++        private bool TryGetRangeMetrics(out int total, out double startY, out double endY)
++        {
++            total = 0;
++            startY = 0;
++            endY = 0;
++
++            var range = DisplayRange;
++            if (range == null || range.End == 0 || !TryGetTotalLineCount(out total))
++                return false;
++
++            var height = Math.Max(1, Bounds.Height);
++            startY = range.Start / (total * 1.0) * height;
++            endY = range.End / (total * 1.0) * height;
++            return true;
++        }
++
++        private void ScrollToPosition(double pointerY, int total)
++        {
++            var height = Math.Max(1, Bounds.Height);
++            var visibleLineCount = Math.Max(1, DisplayRange?.End - DisplayRange?.Start ?? 1);
++            var ratio = Math.Clamp(pointerY / height, 0, 1);
++            var anchorLine = ratio * total;
++            var targetStart = anchorLine - visibleLineCount * _dragOffsetRatio;
++            var line = Math.Max(1, Math.Min(total, (int)Math.Round(targetStart) + 1));
+ 
+-            var line = Math.Max(1, Math.Min(total, (int)Math.Ceiling(pressedY * total / height)));
+             if (Parent is Control parent)
+                 parent.FindLogicalDescendantOfType<ThemedTextDiffPresenter>()?.ScrollToLine(line);
+-
+-            e.Handled = true;
+         }
+ 
+         private void RenderSingleSide(DrawingContext context, List<Models.TextDiffLine> lines, double x, double width)
+         {
+@@ -1545,8 +1602,10 @@ namespace SourceGit.Views
+             }
+         }
+ 
+         private ViewModels.TextLineRange _displayRange = null;
++        private IPointer _dragPointer = null;
++        private double _dragOffsetRatio = 0.5;
+     }
+ 
+     public partial class TextDiffView : UserControl
+     {
+diff --git a/src/Views/WorkingCopy.axaml b/src/Views/WorkingCopy.axaml
+index 4275460c..c5f3ec80 100644
+--- a/src/Views/WorkingCopy.axaml
++++ b/src/Views/WorkingCopy.axaml
+@@ -19,9 +19,9 @@
+     <Grid Grid.Column="0">
+       <Grid.RowDefinitions>
+         <RowDefinition Height="36"/>
+         <RowDefinition Height="*" MinHeight="100"/>
+-        <RowDefinition Height="1"/>
++        <RowDefinition Height="10"/>
+         <RowDefinition Height="*" MinHeight="100"/>
+       </Grid.RowDefinitions>
+ 
+       <!-- Search Filter -->
+@@ -57,12 +57,12 @@
+         </TextBox>
+       </Border>
+ 
+       <!-- Unstaged -->
+-      <Grid Grid.Row="1" RowDefinitions="28,*">
++      <Grid Grid.Row="3" RowDefinitions="28,*">
+         <!-- Unstaged Toolbar -->
+         <Border Grid.Row="0" BorderThickness="0,0,0,1" BorderBrush="{DynamicResource Brush.Border0}">
+-          <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto">
++          <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
+             <Path Grid.Column="0" Margin="8,0,0,0" Width="14" Height="14" Fill="{DynamicResource Brush.FG2}" Data="{StaticResource Icons.Changes}"/>
+             <TextBlock Grid.Column="1" Foreground="{DynamicResource Brush.FG2}" FontWeight="Bold" Margin="4,0,0,0">
+               <Run Text="{DynamicResource Text.WorkingCopy.Unstaged}"/>
+               <Run Text="{Binding Unstaged, Converter={x:Static c:ListConverters.ToCount}, Mode=OneWay}"/>
+@@ -81,18 +81,23 @@
+                           Classes="toggle_untracked"
+                           Width="26" Height="14"
+                           ToolTip.Tip="{DynamicResource Text.WorkingCopy.IncludeUntracked}"
+                           IsChecked="{Binding IncludeUntracked, Mode=TwoWay}"/>
+-            <Button Grid.Column="6"
++            <ToggleButton Grid.Column="6"
++                          Classes="toggle_untracked"
++                          Width="26" Height="14"
++                          ToolTip.Tip="INCLUDE MINIFIED JS"
++                          IsChecked="{Binding IncludeMinifiedJs, Mode=TwoWay}"/>
++            <Button Grid.Column="7"
+                     Classes="icon_button"
+                     Width="26" Height="14"
+                     Padding="0"
+                     IsVisible="{Binding HasUnsolvedConflicts}"
+                     ToolTip.Tip="{DynamicResource Text.WorkingCopy.Conflicts.OpenExternalMergeToolAllConflicts}"
+                     Click="OnOpenExternalMergeToolAllConflicts">
+               <Path Width="14" Height="14" Data="{StaticResource Icons.Conflict}"/>
+             </Button>
+-            <Button Grid.Column="7"
++            <Button Grid.Column="8"
+                     Classes="icon_button"
+                     Width="26" Height="14"
+                     Padding="0"
+                     Click="OnStageSelectedButtonClicked">
+@@ -105,19 +110,19 @@
+                              FontSize="11"
+                              VerticalAlignment="Center"/>
+                 </StackPanel>
+               </ToolTip.Tip>
+-              <Path Width="14" Height="14" Margin="0,6,0,0" Data="{StaticResource Icons.Down}"/>
++              <Path Width="14" Height="14" Margin="0,6,0,0" Data="{StaticResource Icons.Up}"/>
+             </Button>
+-            <Button Grid.Column="8"
++            <Button Grid.Column="9"
+                     Classes="icon_button"
+                     Width="26" Height="14"
+                     Padding="0"
+                     ToolTip.Tip="{DynamicResource Text.WorkingCopy.Unstaged.StageAll}"
+                     Click="OnStageAllButtonClicked">
+-              <Path Width="14" Height="14" Data="{StaticResource Icons.DoubleDown}"/>
++              <Path Width="14" Height="14" Data="{StaticResource Icons.DoubleUp}"/>
+             </Button>
+-            <v:ChangeViewModeSwitcher Grid.Column="9"
++            <v:ChangeViewModeSwitcher Grid.Column="10"
+                                       Width="26" Height="14"
+                                       Margin="0,1,0,0"
+                                       ViewMode="{Binding Source={x:Static vm:Preferences.Instance}, Path=UnstagedChangeViewMode, Mode=TwoWay}"/>
+           </Grid>
+@@ -138,15 +143,19 @@
+       </Grid>
+ 
+       <!-- Splitter -->
+       <GridSplitter Grid.Row="2"
+-                    MinHeight="1"
++                    MinHeight="10"
++                    ResizeDirection="Rows"
++                    ResizeBehavior="PreviousAndNext"
+                     HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+-                    Background="{DynamicResource Brush.Border0}"
++                    Background="Transparent"
++                    BorderThickness="0,1,0,1"
++                    BorderBrush="{DynamicResource Brush.Border0}"
+                     Focusable="False"/>
+ 
+       <!-- Staged -->
+-      <Grid Grid.Row="3" RowDefinitions="27,*">
++      <Grid Grid.Row="1" RowDefinitions="27,*">
+         <!-- Staged Toolbar -->
+         <Border Grid.Row="0" BorderThickness="0,0,0,1" BorderBrush="{DynamicResource Brush.Border0}">
+           <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto">
+             <Path Grid.Column="0" Margin="8,0,0,0" Width="14" Height="14" Fill="{DynamicResource Brush.FG2}" Data="{StaticResource Icons.Changes}"/>
+@@ -165,12 +174,12 @@
+                              VerticalAlignment="Center"
+                              Foreground="{DynamicResource MenuFlyoutItemKeyboardAcceleratorTextForeground}"/>
+                 </StackPanel>
+               </ToolTip.Tip>
+-              <Path Width="14" Height="14" Margin="0,6,0,0" Data="{StaticResource Icons.Up}"/>
++              <Path Width="14" Height="14" Margin="0,6,0,0" Data="{StaticResource Icons.Down}"/>
+             </Button>
+             <Button Grid.Column="5" Classes="icon_button" Width="26" Height="14" Padding="0" ToolTip.Tip="{DynamicResource Text.WorkingCopy.Staged.UnstageAll}" Click="OnUnstageAllButtonClicked">
+-              <Path Width="14" Height="14" Data="{StaticResource Icons.DoubleUp}"/>
++              <Path Width="14" Height="14" Data="{StaticResource Icons.DoubleDown}"/>
+             </Button>
+             <v:ChangeViewModeSwitcher Grid.Column="6"
+                                       Width="26" Height="14"
+                                       Margin="0,1,0,0"
+diff --git a/src/Views/WorkingCopy.axaml.cs b/src/Views/WorkingCopy.axaml.cs
+index 6b9ad8e7..fab1c28d 100644
+--- a/src/Views/WorkingCopy.axaml.cs
++++ b/src/Views/WorkingCopy.axaml.cs
+@@ -1,9 +1,11 @@
+ ﻿using System;
+ using System.Collections.Generic;
+ using System.IO;
++using System.Threading.Tasks;
+ 
+ using Avalonia.Controls;
++using Avalonia.Controls.Primitives;
+ using Avalonia.Input;
+ using Avalonia.Interactivity;
+ using Avalonia.Platform.Storage;
+ using Avalonia.VisualTree;
+@@ -185,12 +187,17 @@ namespace SourceGit.Views
+ 
+             e.Handled = true;
+         }
+ 
+-        private async void OnStageAllButtonClicked(object _, RoutedEventArgs e)
++        private void OnStageAllButtonClicked(object sender, RoutedEventArgs e)
+         {
+-            if (DataContext is ViewModels.WorkingCopy vm)
+-                await vm.StageChangesAsync(vm.VisibleUnstaged, null);
++            if (DataContext is ViewModels.WorkingCopy vm && sender is Control control)
++            {
++                ShowPointerConfirmMenu(
++                    control,
++                    "Stage all visible changes?",
++                    async () => await vm.StageChangesAsync(vm.VisibleUnstaged, null));
++            }
+ 
+             e.Handled = true;
+         }
+ 
+@@ -205,16 +212,51 @@ namespace SourceGit.Views
+ 
+             e.Handled = true;
+         }
+ 
+-        private async void OnUnstageAllButtonClicked(object _, RoutedEventArgs e)
++        private void OnUnstageAllButtonClicked(object sender, RoutedEventArgs e)
+         {
+-            if (DataContext is ViewModels.WorkingCopy vm)
+-                await vm.UnstageChangesAsync(vm.VisibleStaged, null);
++            if (DataContext is ViewModels.WorkingCopy vm && sender is Control control)
++            {
++                ShowPointerConfirmMenu(
++                    control,
++                    "Unstage all visible changes?",
++                    async () => await vm.UnstageChangesAsync(vm.VisibleStaged, null));
++            }
+ 
+             e.Handled = true;
+         }
+ 
++        private void ShowPointerConfirmMenu(Control control, string title, Func<Task> onConfirm)
++        {
++            var menu = new ContextMenu
++            {
++                Placement = PlacementMode.Pointer,
++            };
++
++            var header = new MenuItem
++            {
++                Header = title,
++                IsEnabled = false,
++            };
++            var confirm = new MenuItem
++            {
++                Header = "Confirm",
++            };
++            confirm.Click += async (_, _) => await onConfirm();
++
++            var cancel = new MenuItem
++            {
++                Header = "Cancel",
++            };
++
++            menu.Items.Add(header);
++            menu.Items.Add(new Separator());
++            menu.Items.Add(confirm);
++            menu.Items.Add(cancel);
++            menu.Open(control);
++        }
++
+         private async void OnOpenExternalMergeToolAllConflicts(object _, RoutedEventArgs e)
+         {
+             if (DataContext is ViewModels.WorkingCopy vm)
+                 await vm.UseExternalMergeToolAsync(null);
+diff --git a/.gitignore b/.gitignore
+index 5ca0482f..d25afd5d 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,7 +1,8 @@
+ .vs/
+ .vscode/
+ .idea/
++.dotnet-cli/
+ 
+ *.sln.docstates
+ *.user
+ *.suo
