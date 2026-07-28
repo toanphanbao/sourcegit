@@ -48,6 +48,8 @@ namespace SourceGit.ViewModels
 
     public class Histories : ObservableObject
     {
+        private const int DefaultVisibleAuthorFilterCount = 10;
+
         public bool IsLoading
         {
             get => _isLoading;
@@ -152,15 +154,37 @@ namespace SourceGit.ViewModels
             private set => SetProperty(ref _authorFilters, value);
         }
 
+        public string AuthorFilterSearchText
+        {
+            get => _authorFilterSearchText;
+            set
+            {
+                if (SetProperty(ref _authorFilterSearchText, value ?? string.Empty))
+                    RefreshVisibleAuthorFilters();
+            }
+        }
+
         public HistoryAuthorFilterOption SelectedAuthorFilter
         {
             get => _selectedAuthorFilter;
             set
             {
                 if (SetProperty(ref _selectedAuthorFilter, value ?? _authorFilters[0]))
+                {
+                    OnPropertyChanged(nameof(SelectedAuthorFilterDisplayName));
+                    if (!string.IsNullOrEmpty(_authorFilterSearchText))
+                    {
+                        _authorFilterSearchText = string.Empty;
+                        OnPropertyChanged(nameof(AuthorFilterSearchText));
+                    }
+
+                    RefreshVisibleAuthorFilters();
                     RefreshVisibleCommits();
+                }
             }
         }
+
+        public string SelectedAuthorFilterDisplayName => _selectedAuthorFilter?.DisplayName ?? App.Text("Repository.FilterCommits.Default");
 
         public List<Models.Commit> SelectedCommits
         {
@@ -602,18 +626,45 @@ namespace SourceGit.ViewModels
                     filters.Add(new HistoryAuthorFilterOption(author));
             }
 
-            filters.Sort((l, r) =>
-            {
-                if (l.IsAll)
-                    return -1;
-                if (r.IsAll)
-                    return 1;
-                return string.Compare(l.DisplayName, r.DisplayName, StringComparison.CurrentCultureIgnoreCase);
-            });
-
             var selected = _selectedAuthorFilter;
-            AuthorFilters = filters;
-            SelectedAuthorFilter = selected == null ? filters[0] : FindAuthorFilter(filters, selected);
+            _allAuthorFilters = filters;
+            _selectedAuthorFilter = selected == null ? filters[0] : FindAuthorFilter(filters, selected);
+            OnPropertyChanged(nameof(SelectedAuthorFilter));
+            OnPropertyChanged(nameof(SelectedAuthorFilterDisplayName));
+            RefreshVisibleAuthorFilters();
+        }
+
+        private void RefreshVisibleAuthorFilters()
+        {
+            if (_allAuthorFilters.Count == 0)
+            {
+                AuthorFilters = [new()];
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(_authorFilterSearchText))
+            {
+                var filters = new List<HistoryAuthorFilterOption> { _allAuthorFilters[0] };
+                var count = Math.Min(DefaultVisibleAuthorFilterCount, _allAuthorFilters.Count - 1);
+                for (var i = 1; i <= count; i++)
+                    filters.Add(_allAuthorFilters[i]);
+
+                if (_selectedAuthorFilter is { IsAll: false } selected &&
+                    !filters.Contains(selected))
+                    filters.Add(selected);
+
+                AuthorFilters = filters;
+                return;
+            }
+
+            var visible = new List<HistoryAuthorFilterOption>();
+            foreach (var filter in _allAuthorFilters)
+            {
+                if (filter.IsAll || filter.DisplayName.Contains(_authorFilterSearchText, StringComparison.OrdinalIgnoreCase))
+                    visible.Add(filter);
+            }
+
+            AuthorFilters = visible;
         }
 
         private void RefreshVisibleCommits(bool commitsChanged = false)
@@ -654,7 +705,9 @@ namespace SourceGit.ViewModels
         private Models.Bisect _bisect = null;
         private object _detailContext = new Models.Null();
         private bool _ignoreSelectionChange = false;
+        private List<HistoryAuthorFilterOption> _allAuthorFilters = [new()];
         private List<HistoryAuthorFilterOption> _authorFilters = [new()];
+        private string _authorFilterSearchText = string.Empty;
         private HistoryAuthorFilterOption _selectedAuthorFilter = new();
 
         private GridLength _leftArea = new(1, GridUnitType.Star);

@@ -12,6 +12,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 
 namespace SourceGit.Views
@@ -362,6 +363,90 @@ namespace SourceGit.Views
             InitializeComponent();
         }
 
+        private void OnAuthorFilterButtonClick(object sender, RoutedEventArgs e)
+        {
+            if (DataContext is ViewModels.Histories vm)
+                AuthorFilterListBox.SelectedItem = vm.SelectedAuthorFilter;
+
+            AuthorFilterPopup.IsOpen = true;
+            Dispatcher.UIThread.Post(() =>
+            {
+                AuthorFilterSearchBox.Focus();
+                AuthorFilterSearchBox.SelectAll();
+            }, DispatcherPriority.Background);
+            e.Handled = true;
+        }
+
+        private void OnAuthorFilterSearchBoxKeyDown(object _, KeyEventArgs e)
+        {
+            if (e.Key == Key.Escape)
+            {
+                AuthorFilterPopup.IsOpen = false;
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Down)
+            {
+                if (AuthorFilterListBox.ItemCount > 0)
+                {
+                    if (AuthorFilterListBox.SelectedIndex < 0)
+                        AuthorFilterListBox.SelectedIndex = 0;
+
+                    AuthorFilterListBox.Focus();
+                }
+
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Enter)
+            {
+                if (AuthorFilterListBox.SelectedItem is ViewModels.HistoryAuthorFilterOption option)
+                    ApplyAuthorFilter(option);
+                else if (AuthorFilterListBox.ItemCount > 0 && AuthorFilterListBox.Items[0] is ViewModels.HistoryAuthorFilterOption first)
+                    ApplyAuthorFilter(first);
+
+                e.Handled = true;
+            }
+        }
+
+        private void OnAuthorFilterListBoxKeyDown(object _, KeyEventArgs e)
+        {
+            if (e.Key == Key.Escape)
+            {
+                AuthorFilterPopup.IsOpen = false;
+                AuthorFilterButton.Focus();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Enter)
+            {
+                if (AuthorFilterListBox.SelectedItem is ViewModels.HistoryAuthorFilterOption option)
+                    ApplyAuthorFilter(option);
+
+                e.Handled = true;
+            }
+            else if (e.Key == Key.F && e.KeyModifiers == (OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control))
+            {
+                AuthorFilterSearchBox.CaretIndex = AuthorFilterSearchBox.Text?.Length ?? 0;
+                AuthorFilterSearchBox.Focus();
+                e.Handled = true;
+            }
+        }
+
+        private void OnAuthorFilterOptionTapped(object sender, TappedEventArgs e)
+        {
+            if (sender is Control { DataContext: ViewModels.HistoryAuthorFilterOption option })
+                ApplyAuthorFilter(option);
+
+            e.Handled = true;
+        }
+
+        private void OnClearAuthorFilterSearch(object sender, RoutedEventArgs e)
+        {
+            if (DataContext is ViewModels.Histories vm)
+                vm.AuthorFilterSearchText = string.Empty;
+
+            AuthorFilterSearchBox.Focus();
+            e.Handled = true;
+        }
+
         public async Task GotoParent()
         {
             if (DataContext is not ViewModels.Histories vm)
@@ -453,7 +538,10 @@ namespace SourceGit.Views
             base.OnDataContextChanged(e);
 
             if (DataContext is ViewModels.Histories vm)
+            {
                 CommitListContainer.Columns[1].Width = new(vm.AuthorColumnWidth, DataGridLengthUnitType.Pixel);
+                AuthorFilterListBox.SelectedItem = vm.SelectedAuthorFilter;
+            }
         }
 
         private void OnCommitListHeaderPointerMoved(object sender, PointerEventArgs e)
@@ -1734,6 +1822,14 @@ namespace SourceGit.Views
                 await this.ShowDialogAsync(new ViewModels.InteractiveRebase(repo, on, prefill));
         }
 
+        private void ApplyAuthorFilter(ViewModels.HistoryAuthorFilterOption option)
+        {
+            if (DataContext is ViewModels.Histories vm)
+                vm.SelectedAuthorFilter = option;
+
+            AuthorFilterPopup.IsOpen = false;
+            AuthorFilterButton.Focus();
+        }
 
         private Models.Branch _currentBranch = null;
         private Models.Bisect _bisect = null;
