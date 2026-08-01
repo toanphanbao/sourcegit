@@ -93,6 +93,8 @@ namespace SourceGit.ViewModels
 
             log.Complete();
 
+            _repo.SelectedViewIndex = 0;
+
             if (navigateToUpstreamHEAD)
             {
                 var upstream = _repo.CurrentBranch?.Upstream;
