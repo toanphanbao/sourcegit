@@ -56,10 +56,16 @@
                   Background="#1677FF"
                   VerticalAlignment="Center"
                   IsVisible="{Binding CurrentBranch.Behind.Count, Converter={x:Static c:IntConverters.IsGreaterThanZero}}">
-            <TextBlock Text="{Binding CurrentBranch.Behind.Count}"
-                       FontFamily="{DynamicResource Fonts.Monospace}"
-                       FontSize="11"
-                       Foreground="{DynamicResource Brush.Window}"/>
+            <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+              <TextBlock Text="↓"
+                         FontFamily="{DynamicResource Fonts.Monospace}"
+                         FontSize="11"
+                         Foreground="{DynamicResource Brush.Window}"/>
+              <TextBlock Text="{Binding CurrentBranch.Behind.Count}"
+                         FontFamily="{DynamicResource Fonts.Monospace}"
+                         FontSize="11"
+                         Foreground="{DynamicResource Brush.Window}"/>
+            </StackPanel>
           </Border>
         </StackPanel>
       </Button>
@@ -81,10 +87,16 @@
                   Background="#1677FF"
                   VerticalAlignment="Center"
                   IsVisible="{Binding CurrentBranch.Ahead.Count, Converter={x:Static c:IntConverters.IsGreaterThanZero}}">
-            <TextBlock Text="{Binding CurrentBranch.Ahead.Count}"
-                       FontFamily="{DynamicResource Fonts.Monospace}"
-                       FontSize="11"
-                       Foreground="{DynamicResource Brush.Window}"/>
+            <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+              <TextBlock Text="↑"
+                         FontFamily="{DynamicResource Fonts.Monospace}"
+                         FontSize="11"
+                         Foreground="{DynamicResource Brush.Window}"/>
+              <TextBlock Text="{Binding CurrentBranch.Ahead.Count}"
+                         FontFamily="{DynamicResource Fonts.Monospace}"
+                         FontSize="11"
+                         Foreground="{DynamicResource Brush.Window}"/>
+            </StackPanel>
           </Border>
         </StackPanel>
       </Button>
