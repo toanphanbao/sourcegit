@@ -2,6 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:c="using:SourceGit.Converters"
              xmlns:m="using:SourceGit.Models"
              xmlns:vm="using:SourceGit.ViewModels"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
@@ -49,6 +50,17 @@
         <StackPanel Orientation="Horizontal" Spacing="6">
           <Path Width="14" Height="14" Data="{StaticResource Icons.Pull}"/>
           <TextBlock Text="{DynamicResource Text.Pull}"/>
+          <Border Height="18"
+                  CornerRadius="9"
+                  Padding="6,0"
+                  Background="#1677FF"
+                  VerticalAlignment="Center"
+                  IsVisible="{Binding CurrentBranch.Behind.Count, Converter={x:Static c:IntConverters.IsGreaterThanZero}}">
+            <TextBlock Text="{Binding CurrentBranch.Behind.Count}"
+                       FontFamily="{DynamicResource Fonts.Monospace}"
+                       FontSize="11"
+                       Foreground="{DynamicResource Brush.Window}"/>
+          </Border>
         </StackPanel>
       </Button>
 
@@ -63,6 +75,17 @@
         <StackPanel Orientation="Horizontal" Spacing="6">
           <Path Width="14" Height="14" Data="{StaticResource Icons.Push}"/>
           <TextBlock Text="{DynamicResource Text.Push}"/>
+          <Border Height="18"
+                  CornerRadius="9"
+                  Padding="6,0"
+                  Background="#1677FF"
+                  VerticalAlignment="Center"
+                  IsVisible="{Binding CurrentBranch.Ahead.Count, Converter={x:Static c:IntConverters.IsGreaterThanZero}}">
+            <TextBlock Text="{Binding CurrentBranch.Ahead.Count}"
+                       FontFamily="{DynamicResource Fonts.Monospace}"
+                       FontSize="11"
+                       Foreground="{DynamicResource Brush.Window}"/>
+          </Border>
         </StackPanel>
       </Button>
 
