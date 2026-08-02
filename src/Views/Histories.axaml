@@ -248,7 +248,9 @@
 
             <DataGridTemplateColumn.CellTemplate>
               <DataTemplate DataType="m:Commit">
-                <Border Padding="{Binding LeftMargin, Converter={x:Static c:DoubleConverters.ToLeftMargin}}" ClipToBounds="True" Background="Transparent">
+                <Border Padding="{Binding LeftMargin, Converter={x:Static c:DoubleConverters.ToLeftMargin}}"
+                        ClipToBounds="True"
+                        Background="{Binding IsCurrentHead, Converter={x:Static c:BoolConverters.IsCurrentHeadToBrush}}">
                   <Grid ColumnDefinitions="Auto,Auto,Auto,*" Margin="2,0,4,0" ClipToBounds="True">
                     <v:CommitStatusIndicator Grid.Column="0"
                                              CurrentBranch="{Binding $parent[v:Histories].CurrentBranch}"
@@ -277,7 +279,7 @@
                                               CodeFontFamily="{DynamicResource Fonts.Monospace}"
                                               InlineCodeBackground="{DynamicResource Brush.InlineCode}"
                                               InlineCodeForeground="{DynamicResource Brush.InlineCodeFG}"
-                                              Foreground="{DynamicResource Brush.FG1}"
+                                              Foreground="{Binding IsCurrentHead, Converter={x:Static c:BoolConverters.IsCurrentHeadToForeground}}"
                                               LinkForeground="{DynamicResource Brush.Link}"
                                               Subject="{Binding Subject}"
                                               IssueTrackers="{Binding $parent[v:Histories].IssueTrackers}"
@@ -296,7 +298,8 @@
 
             <DataGridTemplateColumn.CellTemplate>
               <DataTemplate DataType="m:Commit">
-                <Grid ColumnDefinitions="20,*" Background="Transparent">
+                <Grid ColumnDefinitions="20,*"
+                      Background="{Binding IsCurrentHead, Converter={x:Static c:BoolConverters.IsCurrentHeadToBrush}}">
                   <v:Avatar Grid.Column="0"
                             Width="16" Height="16"
                             Margin="4,0,0,0"
@@ -308,6 +311,7 @@
 
                   <Border Grid.Column="1" Padding="8,0" ClipToBounds="True">
                     <TextBlock Text="{Binding Author.Name}"
+                               Foreground="{Binding IsCurrentHead, Converter={x:Static c:BoolConverters.IsCurrentHeadToForeground}}"
                                FontWeight="{Binding IsCurrentHead, Converter={x:Static c:BoolConverters.IsBoldToFontWeight}}"
                                Opacity="{Binding IsMerged, Converter={x:Static c:BoolConverters.IsMergedToOpacity}}"
                                HorizontalAlignment="Left"/>
@@ -324,9 +328,12 @@
 
             <DataGridTemplateColumn.CellTemplate>
               <DataTemplate DataType="m:Commit">
-                <Border Padding="8,0,0,0" Background="Transparent" ClipToBounds="True">
+                <Border Padding="8,0,0,0"
+                        Background="{Binding IsCurrentHead, Converter={x:Static c:BoolConverters.IsCurrentHeadToBrush}}"
+                        ClipToBounds="True">
                   <TextBlock Text="{Binding SHA, Converter={x:Static c:StringConverters.ToShortSHA}}"
                              FontFamily="{DynamicResource Fonts.Monospace}"
+                             Foreground="{Binding IsCurrentHead, Converter={x:Static c:BoolConverters.IsCurrentHeadToForeground}}"
                              FontWeight="{Binding IsCurrentHead, Converter={x:Static c:BoolConverters.IsBoldToFontWeight}}"
                              Opacity="{Binding IsMerged, Converter={x:Static c:BoolConverters.IsMergedToOpacity}}"/>
                 </Border>
@@ -341,8 +348,11 @@
 
             <DataGridTemplateColumn.CellTemplate>
               <DataTemplate DataType="m:Commit">
-                <Border Padding="8,0" Background="Transparent" ClipToBounds="True">
+                <Border Padding="8,0"
+                        Background="{Binding IsCurrentHead, Converter={x:Static c:BoolConverters.IsCurrentHeadToBrush}}"
+                        ClipToBounds="True">
                   <v:CommitTimeTextBlock FontFeatures="+tnum"
+                                         Foreground="{Binding IsCurrentHead, Converter={x:Static c:BoolConverters.IsCurrentHeadToForeground}}"
                                          FontWeight="{Binding IsCurrentHead, Converter={x:Static c:BoolConverters.IsBoldToFontWeight}}"
                                          Opacity="{Binding IsMerged, Converter={x:Static c:BoolConverters.IsMergedToOpacity}}"
                                          Timestamp="{Binding AuthorTime, Mode=OneWay}"
@@ -361,8 +371,11 @@
 
             <DataGridTemplateColumn.CellTemplate>
               <DataTemplate DataType="m:Commit">
-                <Border Padding="8,0" Background="Transparent" ClipToBounds="True">
+                <Border Padding="8,0"
+                        Background="{Binding IsCurrentHead, Converter={x:Static c:BoolConverters.IsCurrentHeadToBrush}}"
+                        ClipToBounds="True">
                   <v:CommitTimeTextBlock FontWeight="{Binding IsCurrentHead, Converter={x:Static c:BoolConverters.IsBoldToFontWeight}}"
+                                         Foreground="{Binding IsCurrentHead, Converter={x:Static c:BoolConverters.IsCurrentHeadToForeground}}"
                                          FontFeatures="+tnum"
                                          Opacity="{Binding IsMerged, Converter={x:Static c:BoolConverters.IsMergedToOpacity}}"
                                          Timestamp="{Binding CommitterTime, Mode=OneWay}"

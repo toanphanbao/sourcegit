@@ -15,5 +15,11 @@ namespace SourceGit.Converters
 
         public static readonly FuncValueConverter<bool, IBrush> IsWarningToBrush =
             new(x => x ? Brushes.DarkGoldenrod : Application.Current?.FindResource("Brush.FG1") as IBrush);
+
+        public static readonly FuncValueConverter<bool, IBrush> IsCurrentHeadToBrush =
+            new(x => x ? Application.Current?.FindResource("Brush.AccentHovered") as IBrush : Brushes.Transparent);
+
+        public static readonly FuncValueConverter<bool, IBrush> IsCurrentHeadToForeground =
+            new(x => x ? Brushes.LimeGreen : Application.Current?.FindResource("Brush.FG1") as IBrush);
     }
 }
